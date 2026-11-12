@@ -1,5 +1,6 @@
+
 #!/usr/bin/env python3
-"""Benchmark a local Ollama model on the GitHub-hosted runner."""
+"""Benchmark an Ollama model on a GitHub-hosted runner."""
 
 import json
 import os
@@ -37,6 +38,7 @@ def main() -> int:
     print(f"Ollama endpoint: {BASE_URL}")
 
     started = time.perf_counter()
+
     try:
         result = post_json(
             "/api/generate",
@@ -44,17 +46,26 @@ def main() -> int:
                 "model": MODEL,
                 "prompt": PROMPT,
                 "stream": False,
+                "think": False,
                 "options": {
                     "temperature": 0.3,
-                    "num_predict": 220,
+                    "num_predict": 400,
                 },
             },
         )
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"Benchmark request failed: {exc}", file=sys.stderr)
         return 1
 
     wall_seconds = time.perf_counter() - started
+
+    response_text = result.get("response") or ""
+    thinking_text = result.get("thinking") or ""
+
     eval_count = int(result.get("eval_count") or 0)
     eval_duration_ns = int(result.get("eval_duration") or 0)
     prompt_eval_duration_ns = int(result.get("prompt_eval_duration") or 0)
@@ -69,7 +80,9 @@ def main() -> int:
     report = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model": MODEL,
-        "runner": os.getenv("RUNNER_NAME", "GitHub-hosted Ubuntu runner"),
+        "runner": os.getenv(
+            "RUNNER_NAME", "GitHub-hosted Ubuntu runner"
+        ),
         "wall_clock_seconds": round(wall_seconds, 2),
         "model_load_seconds": round(load_duration_ns / 1e9, 2),
         "prompt_tokens": result.get("prompt_eval_count"),
@@ -77,9 +90,15 @@ def main() -> int:
         "prompt_eval_seconds": round(prompt_eval_duration_ns / 1e9, 2),
         "generation_seconds": round(eval_duration_ns / 1e9, 2),
         "generation_tokens_per_second": (
-            round(tokens_per_second, 2) if tokens_per_second is not None else None
+            round(tokens_per_second, 2)
+            if tokens_per_second is not None
+            else None
         ),
-        "response": result.get("response", ""),
+        "done": result.get("done"),
+        "done_reason": result.get("done_reason"),
+        "thinking_characters": len(thinking_text),
+        "response_characters": len(response_text),
+        "response": response_text,
     }
 
     Path("benchmark-results.json").write_text(
@@ -90,6 +109,15 @@ def main() -> int:
     print("\n========== BENCHMARK RESULTS ==========")
     print(json.dumps(report, indent=2, ensure_ascii=False))
     print("=======================================")
+
+    if not response_text.strip():
+        print("ERROR: Model returned an empty final response.")
+        return 1
+
+    print("\n========== GENERATED LINKEDIN POST ==========")
+    print(response_text)
+    print("=============================================")
+
     return 0
 
 
