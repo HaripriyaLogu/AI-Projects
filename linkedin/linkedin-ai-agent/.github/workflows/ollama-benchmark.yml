@@ -51,7 +51,7 @@ jobs:
       - name: Run generation benchmark
         env:
           OLLAMA_MODEL: ${{ inputs.model }}
-        run: python3 scripts/benchmark_ollama.py
+        run: python3 linkedin/linkedin-ai-agent/scripts/benchmark_ollama.py
 
       - name: Upload benchmark result
         if: always()
