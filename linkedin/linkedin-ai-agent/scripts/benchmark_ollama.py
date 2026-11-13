@@ -1,6 +1,9 @@
 
 #!/usr/bin/env python3
-"""Benchmark an Ollama chat model on a GitHub-hosted runner."""
+"""
+Benchmark Qwen3 using Ollama on a GitHub-hosted runner.
+Inspect model configuration and generate a LinkedIn post.
+"""
 
 import json
 import os
@@ -10,6 +13,10 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
 
 BASE_URL = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
@@ -43,7 +50,13 @@ Requirements:
 Return only the finished LinkedIn post."""
 
 
+# --------------------------------------------------
+# OLLAMA API HELPER
+# --------------------------------------------------
+
 def post_json(path: str, payload: dict, timeout: int = 900) -> dict:
+    """Send a POST request to the Ollama API."""
+
     data = json.dumps(payload).encode("utf-8")
 
     request = urllib.request.Request(
@@ -57,14 +70,78 @@ def post_json(path: str, payload: dict, timeout: int = 900) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+# --------------------------------------------------
+# MAIN BENCHMARK
+# --------------------------------------------------
+
 def main() -> int:
-    print(f"Benchmarking model: {MODEL}")
+
+    print("=" * 55)
+    print("OLLAMA CLOUD MODEL BENCHMARK")
+    print("=" * 55)
+
+    print(f"Model: {MODEL}")
     print(f"Ollama endpoint: {BASE_URL}")
-    print("API endpoint: /api/chat")
+
+    # ----------------------------------------------
+    # STEP 1: INSPECT MODEL CONFIGURATION
+    # ----------------------------------------------
+
+    print("\n[STEP 1] Inspecting model configuration...")
+
+    try:
+        model_info = post_json(
+            "/api/show",
+            {
+                "model": MODEL
+            },
+        )
+
+        print("\n========== MODEL CONFIGURATION ==========")
+
+        print("\nThinking configuration:")
+        print(
+            json.dumps(
+                model_info.get("thinking"),
+                indent=2
+            )
+        )
+
+        print("\nModel details:")
+        print(
+            json.dumps(
+                model_info.get("details", {}),
+                indent=2
+            )
+        )
+
+        print("\nModel parameters:")
+        print(model_info.get("parameters", "Not available"))
+
+        print("=========================================")
+
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+    ) as exc:
+
+        print(
+            f"Model inspection failed: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    # ----------------------------------------------
+    # STEP 2: GENERATE LINKEDIN POST
+    # ----------------------------------------------
+
+    print("\n[STEP 2] Generating LinkedIn post...")
 
     started = time.perf_counter()
 
     try:
+
         result = post_json(
             "/api/chat",
             {
@@ -93,24 +170,41 @@ def main() -> int:
         TimeoutError,
         json.JSONDecodeError,
     ) as exc:
-        print(f"Benchmark request failed: {exc}", file=sys.stderr)
+
+        print(
+            f"Generation request failed: {exc}",
+            file=sys.stderr,
+        )
         return 1
 
     wall_seconds = time.perf_counter() - started
 
-    # Extract the final response from Ollama Chat API.
+    # ----------------------------------------------
+    # STEP 3: EXTRACT MODEL RESPONSE
+    # ----------------------------------------------
+
     message = result.get("message") or {}
 
     response_text = message.get("content") or ""
     thinking_text = message.get("thinking") or ""
 
-    # Extract performance metrics.
+    # ----------------------------------------------
+    # STEP 4: EXTRACT PERFORMANCE METRICS
+    # ----------------------------------------------
+
     eval_count = int(result.get("eval_count") or 0)
-    eval_duration_ns = int(result.get("eval_duration") or 0)
+
+    eval_duration_ns = int(
+        result.get("eval_duration") or 0
+    )
+
     prompt_eval_duration_ns = int(
         result.get("prompt_eval_duration") or 0
     )
-    load_duration_ns = int(result.get("load_duration") or 0)
+
+    load_duration_ns = int(
+        result.get("load_duration") or 0
+    )
 
     tokens_per_second = (
         eval_count / (eval_duration_ns / 1_000_000_000)
@@ -118,56 +212,128 @@ def main() -> int:
         else None
     )
 
+    # ----------------------------------------------
+    # STEP 5: PREPARE BENCHMARK REPORT
+    # ----------------------------------------------
+
     report = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp_utc": datetime.now(
+            timezone.utc
+        ).isoformat(),
+
         "model": MODEL,
+
         "runner": os.getenv(
-            "RUNNER_NAME", "GitHub-hosted Ubuntu runner"
+            "RUNNER_NAME",
+            "GitHub-hosted Ubuntu runner",
         ),
+
         "api_endpoint": "/api/chat",
-        "wall_clock_seconds": round(wall_seconds, 2),
-        "model_load_seconds": round(load_duration_ns / 1e9, 2),
-        "prompt_tokens": result.get("prompt_eval_count"),
+
+        "wall_clock_seconds": round(
+            wall_seconds, 2
+        ),
+
+        "model_load_seconds": round(
+            load_duration_ns / 1e9, 2
+        ),
+
+        "prompt_tokens": result.get(
+            "prompt_eval_count"
+        ),
+
         "generated_tokens": eval_count,
+
         "prompt_eval_seconds": round(
             prompt_eval_duration_ns / 1e9, 2
         ),
+
         "generation_seconds": round(
             eval_duration_ns / 1e9, 2
         ),
+
         "generation_tokens_per_second": (
             round(tokens_per_second, 2)
             if tokens_per_second is not None
             else None
         ),
+
         "done": result.get("done"),
+
         "done_reason": result.get("done_reason"),
+
         "thinking_characters": len(thinking_text),
+
         "response_characters": len(response_text),
+
+        "thinking": thinking_text,
+
         "response": response_text,
     }
 
-    # Save benchmark results.
-    Path("benchmark-results.json").write_text(
-        json.dumps(report, indent=2, ensure_ascii=False),
+    # ----------------------------------------------
+    # STEP 6: SAVE RESULTS
+    # ----------------------------------------------
+
+    output_file = Path("benchmark-results.json")
+
+    output_file.write_text(
+        json.dumps(
+            report,
+            indent=2,
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
 
     print("\n========== BENCHMARK RESULTS ==========")
-    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+    print(
+        json.dumps(
+            report,
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+
     print("=======================================")
 
-    # Validate the generated response.
+    # ----------------------------------------------
+    # STEP 7: DISPLAY GENERATED CONTENT
+    # ----------------------------------------------
+
     if not response_text.strip():
+
         print(
-            "ERROR: Model returned an empty final response.",
+            "\nERROR: Model returned an empty response.",
             file=sys.stderr,
         )
+
         return 1
 
     print("\n========== GENERATED LINKEDIN POST ==========")
     print(response_text)
     print("=============================================")
+
+    # ----------------------------------------------
+    # STEP 8: BASIC OUTPUT VALIDATION
+    # ----------------------------------------------
+
+    word_count = len(response_text.split())
+
+    print("\n========== CONTENT VALIDATION ==========")
+
+    print(f"Word count: {word_count}")
+    print(f"Response characters: {len(response_text)}")
+    print(f"Generation completed: {result.get('done')}")
+    print(f"Stop reason: {result.get('done_reason')}")
+
+    if 120 <= word_count <= 180:
+        print("Word count check: PASSED")
+    else:
+        print("Word count check: FAILED")
+
+    print("=========================================")
 
     return 0
 
