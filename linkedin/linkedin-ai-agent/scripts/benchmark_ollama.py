@@ -69,7 +69,17 @@ def post_json(path: str, payload: dict, timeout: int = 900) -> dict:
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
+def extract_final_answer(response_text: str) -> str:
+    """
+    Extract the final answer after Qwen3's thinking marker.
+    """
 
+    marker = "</think>"
+
+    if marker in response_text:
+        return response_text.rsplit(marker, 1)[-1].strip()
+
+    return response_text.strip()
 # --------------------------------------------------
 # MAIN BENCHMARK
 # --------------------------------------------------
@@ -183,10 +193,14 @@ def main() -> int:
     # STEP 3: EXTRACT MODEL RESPONSE
     # ----------------------------------------------
 
+    
+
     message = result.get("message") or {}
 
-    response_text = message.get("content") or ""
+    raw_response = message.get("content") or ""
     thinking_text = message.get("thinking") or ""
+
+    response_text = extract_final_answer(raw_response)
 
     # ----------------------------------------------
     # STEP 4: EXTRACT PERFORMANCE METRICS
@@ -263,13 +277,12 @@ def main() -> int:
         "done_reason": result.get("done_reason"),
 
         "thinking_characters": len(thinking_text),
-
-        "response_characters": len(response_text),
-
+        "raw_response_characters": len(raw_response),
+        "final_response_characters": len(response_text),
         "thinking": thinking_text,
-
         "response": response_text,
     }
+    
 
     # ----------------------------------------------
     # STEP 6: SAVE RESULTS
@@ -323,20 +336,30 @@ def main() -> int:
 
     print("\n========== CONTENT VALIDATION ==========")
 
+    word_count = len(response_text.split())
+
     print(f"Word count: {word_count}")
-    print(f"Response characters: {len(response_text)}")
-    print(f"Generation completed: {result.get('done')}")
-    print(f"Stop reason: {result.get('done_reason')}")
 
     if 120 <= word_count <= 180:
         print("Word count check: PASSED")
     else:
         print("Word count check: FAILED")
 
+
+    if result.get("done_reason") == "length":
+        print("WARNING: Generation stopped at the token limit.")
+        print("The generated post may be incomplete.")
+    else:
+        print("Generation stop reason:", result.get("done_reason"))
+
+    if "</think>" in raw_response:
+        print("Thinking marker detected and final answer extracted.")
+    else:
+        print("No thinking marker detected.")
+
     print("=========================================")
 
-    return 0
-
+    
 
 if __name__ == "__main__":
     raise SystemExit(main())
